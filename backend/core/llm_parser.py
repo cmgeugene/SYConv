@@ -211,46 +211,71 @@ def translate_and_verify_row_with_llm(word: str, context: str, model: str = None
     chat_endpoint = ollama_endpoint.replace("/api/generate", "/api/chat")
     
     def call_ollama(messages):
-        req_data = {
-            "model": ollama_model,
-            "messages": messages,
-            "stream": False,
-            "options": {"temperature": 0.1, "think": False}
-        }
-        
-        req = urllib.request.Request(chat_endpoint, data=json_lib.dumps(req_data).encode('utf-8'), headers={'Content-Type': 'application/json'})
-        with urllib.request.urlopen(req, timeout=3600) as response:
-            result_json = json_lib.loads(response.read().decode('utf-8'))
-            msg_obj = result_json.get("message", {})
-            response_text = msg_obj.get("content", "") or msg_obj.get("thinking", "")
+        try:
+            req_data = {
+                "model": ollama_model,
+                "messages": messages,
+                "stream": False,
+                "options": {"temperature": 0.1, "think": False}
+            }
             
-            if "```json" in response_text:
-                response_text = response_text.split("```json")[-1].split("```")[0]
-            elif "```" in response_text:
-                response_text = response_text.split("```")[-2] if len(response_text.split("```")) >= 3 else response_text.replace("```", "")
-            
-            return json_lib.loads(response_text.strip())
+            req = urllib.request.Request(chat_endpoint, data=json_lib.dumps(req_data).encode('utf-8'), headers={'Content-Type': 'application/json'})
+            with urllib.request.urlopen(req, timeout=3600) as response:
+                result_json = json_lib.loads(response.read().decode('utf-8'))
+                msg_obj = result_json.get("message", {})
+                response_text = (msg_obj.get("content", "") or msg_obj.get("thinking", "")).strip()
+                
+                # Robust JSON extraction
+                if "```json" in response_text:
+                    response_text = response_text.split("```json")[-1].split("```")[0]
+                elif "```" in response_text:
+                    blocks = response_text.split("```")
+                    response_text = blocks[-2] if len(blocks) >= 3 else blocks[0]
+                
+                # If no code blocks, try to find the outermost braces
+                if not ("{" in response_text and "}" in response_text):
+                    import re
+                    match = re.search(r'\{.*\}', response_text, re.DOTALL)
+                    if match:
+                        response_text = match.group(0)
+
+                return json_lib.loads(response_text.strip())
+        except Exception as inner_e:
+            print(f"Internal call_ollama error: {inner_e}")
+            # Return a minimal valid structure to keep the pipe flowing
+            return {"lemma": word, "pos": "error", "context_meaning": "Error parsing JSON", "other_meanings": "", "is_idiom": False}
 
     try:
         # Pass 1: Extraction
-        system_prompt = "You are an expert English teacher API. Output ONLY valid JSON containing lemma, pos, meaning, and is_idiom. Do not include markdown formatting or thoughts."
+        system_prompt = "You are an expert English teacher API. Output ONLY valid JSON. Do not include markdown formatting or thoughts."
         user_prompt_1 = f'''
         Full Context: "{context}"
         Target Word: "{word}"
         
         Extract:
-        1. "lemma": Base dictionary form suitable for the context.
+        1. "lemma": Base dictionary form.
+           - If POS is "형용사" and it is a participle, use the adjective form (e.g., "impaired", "exciting").
+           - Otherwise, use the base present form (e.g., "realize", not "realized").
         2. "pos": Part of Speech in KOREAN. 
-           - Single POS: Use full name (e.g., "명사", "동사", "형용사", "부사", "전치사", "접속사", "명사구", "형용사구").
-           - Multiple POS: Use shortened names separated by a slash with spaces (e.g., "동 / 명", "형 / 부", "명 / 형"). Sort them alphabetically based on their original English names (noun, verb, adj, adv).
-        3. "meaning": Korean meaning. CRITICAL: For each POS, use the format: "{{Context Meaning}}, {{Other Common Meanings}}". The meaning most suitable for the current context MUST come first. If there are multiple parts of speech, provide these blocks in the SAME ORDER, separated by a slash (e.g., if pos is "동 / 명", meaning must be "추적하다, 뒤쫒다 / 추적, 흔적"). Focus 100% on the surrounding sentence for the first meaning.
-        4. "is_idiom": boolean.
+           - Single: full name (e.g., "명사", "동사", "형용사").
+           - Multiple: shortened names with slashes (e.g., "동 / 명"). Sort alphabetically (noun, verb, adj, adv).
+           - CRITICAL: Participles ("-ed", "-ing") modifying nouns are usually "형용사".
+        3. "context_meaning": The CONCISE Korean meaning for the current sentence.
+           - CRITICAL: NO SENTENCES. Use a word matching the POS (e.g., if POS is "형용사", use "손상된", not "손상").
+           - If multiple POS, separate with slashes (e.g., "달리다 / 매달림").
+        4. "other_meanings": Other meanings strictly for the ABOVE POS.
+           - List as a comma-separated string.
+           - CRITICAL: DO NOT include noun meanings (e.g., "손상") if the POS is "형용사". Use "손상된", "장애가 있는".
+           - CRITICAL: NO LABELS like "(명사)" or "(동사)".
+           - If multiple POS, separate blocks with slashes.
+        5. "is_idiom": boolean.
         
         Format:
         {{
-            "lemma": "example",
+            "lemma": "word",
             "pos": "동사",
-            "meaning": "문맥뜻, 일반뜻1, 일반뜻2",
+            "context_meaning": "문맥뜻",
+            "other_meanings": "일반뜻1, 일반뜻2",
             "is_idiom": false
         }}
         '''
@@ -268,16 +293,14 @@ def translate_and_verify_row_with_llm(word: str, context: str, model: str = None
         A previous model translated the word "{word}" from the sentence "{context}" as follows:
         {json_lib.dumps(pass1_result, ensure_ascii=False)}
         
-        CRITICAL INSTRUCTIONS:
-        1. STRONGLY PRESERVE CONTEXT-SPECIFIC MEANINGS. (e.g. keep "환율" instead of "비율" for "rates" in finance).
-        2. Verify if this translation is perfectly accurate for the GIVEN CONTEXT.
-        3. MEANING PRIORITY: The correct meaning for the context MUST be first. It should be in the format: "{{Context Meaning}}, {{Other Common Meanings}}".
-        4. POS & MEANING KOREAN FORMATTING: 
-           - Single POS: Full Korean name (e.g., "명사", "동사").
-           - Multiple POS: Shortened Korean names with slashes (e.g., "동 / 명"). 
-           - The "meaning" field must match the POS order exactly (e.g. "동사문맥뜻, 일반뜻 / 명사문맥뜻, 일반뜻").
+        CRITICAL VERIFICATION:
+        1. CONCISENESS: Ensure "context_meaning" is a word/short phrase, NOT a description or sentence.
+        2. POS MATCHING: "other_meanings" MUST ONLY contain definitions for the specified POS in "pos".
+           - Example: If POS is "동사", do NOT include noun definitions like "표준".
+        3. NO LABELS: Remove ANY extra markers like "(명사)", "(동사)", "본래 의미:", etc.
+        4. MULTI-POS: Both meaning fields must match the POS order.
         
-        Output ONLY the final, corrected JSON. No explanation.
+        Output ONLY the final, corrected JSON.
         '''
         
         messages.append({"role": "assistant", "content": json_lib.dumps(pass1_result, ensure_ascii=False)})
@@ -285,6 +308,46 @@ def translate_and_verify_row_with_llm(word: str, context: str, model: str = None
         
         pass2_result = call_ollama(messages)
         print("Pass 2 Result:", pass2_result)
+        
+        # Combine contextual and other meanings while deduplicating
+        if isinstance(pass2_result, dict) and "context_meaning" in pass2_result:
+            import re
+            ctx_orig = pass2_result.get("context_meaning") or ""
+            oth_orig = pass2_result.get("other_meanings") or ""
+            
+            def combine_and_dedup(ctx_block, oth_block):
+                # Split by comma or semicolon
+                all_words = re.split(r'[,;]', f"{ctx_block},{oth_block}")
+                seen = set()
+                unique = []
+                for w in [w.strip() for w in all_words if w.strip()]:
+                    if w not in seen:
+                        unique.append(w)
+                        seen.add(w)
+                return ", ".join(unique)
+
+            if "/" in ctx_orig or "/" in oth_orig:
+                # Handle multi-POS blocks
+                ctx_parts = [s.strip() for s in ctx_orig.split("/")]
+                oth_parts = [s.strip() for s in oth_orig.split("/")]
+                
+                # Match them up by index, fill with empty if lengths differ
+                max_len = max(len(ctx_parts), len(oth_parts))
+                final_parts = []
+                for i in range(max_len):
+                    c = ctx_parts[i] if i < len(ctx_parts) else ""
+                    o = oth_parts[i] if i < len(oth_parts) else ""
+                    final_parts.append(combine_and_dedup(c, o))
+                
+                pass2_result["meaning"] = " / ".join(final_parts)
+            else:
+                # Handle single POS block
+                pass2_result["meaning"] = combine_and_dedup(ctx_orig, oth_orig)
+            
+            # Remove internal fields before returning to frontend
+            pass2_result.pop("context_meaning", None)
+            pass2_result.pop("other_meanings", None)
+
         return pass2_result
         
     except Exception as e:
