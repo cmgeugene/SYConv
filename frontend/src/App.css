@@ -6,7 +6,8 @@
   --accent: #3b82f6;
   --accent-hover: #2563eb;
   --border: rgba(255, 255, 255, 0.1);
-  --highlight-box: rgba(250, 204, 21, 0.4); /* Yellow tint */
+  --highlight-box: rgba(250, 204, 21, 0.4);
+  /* Yellow tint */
 }
 
 body {
@@ -133,13 +134,22 @@ header {
   animation: spin 1s linear infinite;
 }
 
+.spin-animation {
+  animation: spin 1s linear infinite;
+}
+
 @keyframes spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .overlay {
   position: absolute;
-  top: 0; left: 0; right: 0; bottom: 0;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
   background: rgba(15, 23, 42, 0.8);
   backdrop-filter: blur(4px);
   display: flex;

@@ -23,11 +23,21 @@ class ChunkData(BaseModel):
     full_text: str = ""
     chunk_bbox: List[int] = []
 
-class ExtractHighlightsResponse(BaseModel):
-    status: str
-    filename: str
+class PageData(BaseModel):
+    page_index: int
+    image_b64: str
     chunks: List[ChunkData]
     all_ocr_results: List[OCRWord] = []
 
+class ExtractHighlightsResponse(BaseModel):
+    status: str
+    filename: str
+    pages: List[PageData]
+
 class ParseWordsRequest(BaseModel):
     chunks: List[ChunkData]
+
+class TranslateRowRequest(BaseModel):
+    word: str
+    context: str
+    model: str = None

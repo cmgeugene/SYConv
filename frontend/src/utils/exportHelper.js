@@ -7,11 +7,12 @@ export const exportToExcel = (data, filename = 'SYConv_Extracted_Words.xlsx') =>
     }
 
     // Clean data for the user
-    const cleanData = data.map(({ word, pos, meaning, is_idiom }) => ({
+    const cleanData = data.map(({ word, lemma, pos, meaning, context }) => ({
         'Word / Phrase': word,
+        'Lemma (원형)': lemma || '',
         'Part of Speech': pos,
         'Meaning': meaning,
-        'Is Idiom': is_idiom ? 'Yes' : 'No'
+        'Context (원문)': context || ''
     }));
 
     const worksheet = XLSX.utils.json_to_sheet(cleanData);

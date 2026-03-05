@@ -20,23 +20,34 @@ def parse_highlighted_words_with_llm(highlighted_texts_with_boxes: List[Dict[str
     raw_texts = [item["text"] for item in highlighted_texts_with_boxes]
     
     prompt = f"""
-    You are an expert English teacher. The user has highlighted some words in an English text snippet.
+    You are an expert English teacher API. Your ONLY job is to extract vocabulary data from the provided text and output it as a strict JSON array.
+    DO NOT provide any explanations, greetings, or reasoning. Output ONLY valid JSON starting with `{{` and ending with `}}`.
     
-    Full context text:
+    Full Context Text:
     ---
     {full_context_text}
     ---
     
-    Highlighted words raw extraction (might contain OCR errors):
+    Target Words (Raw OCR extraction):
     {raw_texts}
     
-    For each highlighted word exactly matching the sequential order, return a JSON array under the key "words", with objects containing:
-    - "word": The corrected lowercase base form (lemma) of the word. MUST convert plural to singular, past/participle to present base verb (e.g., "realized" -> "realize"). If it's part of an idiom like "taking off", extract the base idiom "take off".
-    - "pos": Part of speech based on the context. If it functions as multiple or has dual usage, list them separated by a slash AND sort them in alphabetical order to maintain consistency (e.g., ALWAYS "adj / adv", never "adv / adj").
-    - "meaning": The primary Korean meaning appropriate for the context first, followed by other common dictionary definitions. DO NOT write "(문맥)". If there are multiple POS tags, align the meanings (e.g., if pos is "adv / adj", meaning could be "빠르게 / 빠른, 신속한").
-    - "is_idiom": A boolean (true/false) indicating if it's an idiom/phrase.
+    Instructions for each target word:
+    1. "word": Extract the base form (lemma) used in the context. Convert plurals to singular, and past/participle to present base verb (e.g., "realized" -> "realize"). If it's an idiom (e.g., "taking off"), extract the base idiom ("take off").
+    2. "pos": Determine the Part of Speech in the context. If it acts as multiple, separate them by a slash and sort using this EXACT priority order: noun, verb, adj, adv, prep, conj (e.g., "noun / verb", NEVER "verb / noun").
+    3. "meaning": Provide the primary Korean meaning appropriate for the context first. Then, optionally add other common dictionary definitions. DO NOT write "(문맥)". Align meanings if there are multiple POS tags (e.g., pos: "noun / verb", meaning: "예시 / 예시를 들다").
+    4. "is_idiom": true or false.
     
-    Return ONLY valid JSON.
+    MUST RETURN IN THIS EXACT JSON FORMAT:
+    {{
+      "words": [
+        {{
+          "word": "example",
+          "pos": "noun / verb",
+          "meaning": "예시 / 예시를 들다",
+          "is_idiom": false
+        }}
+      ]
+    }}
     """
     
     if provider == "ollama":
@@ -57,12 +68,13 @@ def parse_highlighted_words_with_llm(highlighted_texts_with_boxes: List[Dict[str
                 "options": {
                     "temperature": 0.1,
                     "think": False,
-                    "num_ctx": 4096
+                    "num_ctx": 4096,
+                    "num_predict": 2500
                 }
             }
             
             req = urllib.request.Request(chat_endpoint, data=json_lib.dumps(req_data).encode('utf-8'), headers={'Content-Type': 'application/json'})
-            with urllib.request.urlopen(req, timeout=300) as response:
+            with urllib.request.urlopen(req, timeout=3600) as response:
                 result_bytes = response.read()
                 result_str = result_bytes.decode('utf-8')
                 
@@ -182,3 +194,106 @@ def _merge_boxes(parsed_words, highlighted_texts_with_boxes):
             parsed["bbox"] = highlighted_texts_with_boxes[i]["bbox"]
             final_list.append(parsed)
     return final_list
+
+def translate_and_verify_row_with_llm(word: str, context: str, model: str = None) -> Dict[str, Any]:
+    """
+    Performs a 2-stage LLM translation for a single row from the Data Sheet.
+    Pass 1: Initial extraction and translation from context.
+    Pass 2: LLM Verification of the Pass 1 result.
+    """
+    ollama_endpoint = os.getenv("OLLAMA_ENDPOINT", "http://localhost:11434/api/generate")
+    # Use provided model or default from env
+    ollama_model = model if model else os.getenv("OLLAMA_MODEL", "qwen2.5:14b")
+    
+    import urllib.request
+    import json as json_lib
+    
+    chat_endpoint = ollama_endpoint.replace("/api/generate", "/api/chat")
+    
+    def call_ollama(messages):
+        req_data = {
+            "model": ollama_model,
+            "messages": messages,
+            "stream": False,
+            "options": {"temperature": 0.1, "think": False}
+        }
+        
+        req = urllib.request.Request(chat_endpoint, data=json_lib.dumps(req_data).encode('utf-8'), headers={'Content-Type': 'application/json'})
+        with urllib.request.urlopen(req, timeout=3600) as response:
+            result_json = json_lib.loads(response.read().decode('utf-8'))
+            msg_obj = result_json.get("message", {})
+            response_text = msg_obj.get("content", "") or msg_obj.get("thinking", "")
+            
+            if "```json" in response_text:
+                response_text = response_text.split("```json")[-1].split("```")[0]
+            elif "```" in response_text:
+                response_text = response_text.split("```")[-2] if len(response_text.split("```")) >= 3 else response_text.replace("```", "")
+            
+            return json_lib.loads(response_text.strip())
+
+    try:
+        # Pass 1: Extraction
+        system_prompt = "You are an expert English teacher API. Output ONLY valid JSON containing lemma, pos, meaning, and is_idiom. Do not include markdown formatting or thoughts."
+        user_prompt_1 = f'''
+        Full Context: "{context}"
+        Target Word: "{word}"
+        
+        Extract:
+        1. "lemma": Base dictionary form suitable for the context.
+        2. "pos": Part of Speech in KOREAN. 
+           - Single POS: Use full name (e.g., "명사", "동사", "형용사", "부사", "전치사", "접속사", "명사구", "형용사구").
+           - Multiple POS: Use shortened names separated by a slash with spaces (e.g., "동 / 명", "형 / 부", "명 / 형"). Sort them alphabetically based on their original English names (noun, verb, adj, adv).
+        3. "meaning": Korean meaning. CRITICAL: For each POS, use the format: "{{Context Meaning}}, {{Other Common Meanings}}". The meaning most suitable for the current context MUST come first. If there are multiple parts of speech, provide these blocks in the SAME ORDER, separated by a slash (e.g., if pos is "동 / 명", meaning must be "추적하다, 뒤쫒다 / 추적, 흔적"). Focus 100% on the surrounding sentence for the first meaning.
+        4. "is_idiom": boolean.
+        
+        Format:
+        {{
+            "lemma": "example",
+            "pos": "동사",
+            "meaning": "문맥뜻, 일반뜻1, 일반뜻2",
+            "is_idiom": false
+        }}
+        '''
+        
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt_1}
+        ]
+        
+        pass1_result = call_ollama(messages)
+        print("Pass 1 Result:", pass1_result)
+        
+        # Pass 2: Verification
+        user_prompt_2 = f'''
+        A previous model translated the word "{word}" from the sentence "{context}" as follows:
+        {json_lib.dumps(pass1_result, ensure_ascii=False)}
+        
+        CRITICAL INSTRUCTIONS:
+        1. STRONGLY PRESERVE CONTEXT-SPECIFIC MEANINGS. (e.g. keep "환율" instead of "비율" for "rates" in finance).
+        2. Verify if this translation is perfectly accurate for the GIVEN CONTEXT.
+        3. MEANING PRIORITY: The correct meaning for the context MUST be first. It should be in the format: "{{Context Meaning}}, {{Other Common Meanings}}".
+        4. POS & MEANING KOREAN FORMATTING: 
+           - Single POS: Full Korean name (e.g., "명사", "동사").
+           - Multiple POS: Shortened Korean names with slashes (e.g., "동 / 명"). 
+           - The "meaning" field must match the POS order exactly (e.g. "동사문맥뜻, 일반뜻 / 명사문맥뜻, 일반뜻").
+        
+        Output ONLY the final, corrected JSON. No explanation.
+        '''
+        
+        messages.append({"role": "assistant", "content": json_lib.dumps(pass1_result, ensure_ascii=False)})
+        messages.append({"role": "user", "content": user_prompt_2})
+        
+        pass2_result = call_ollama(messages)
+        print("Pass 2 Result:", pass2_result)
+        return pass2_result
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print(f"Translation failed: {e}")
+        return {
+            "lemma": word,
+            "pos": "error",
+            "meaning": f"Error: {str(e)}",
+            "is_idiom": False
+        }

@@ -10,7 +10,7 @@ def get_reader():
     global _reader
     if _reader is None:
         # Assuming English texts. Add 'ko' if Korean extraction is also needed on the paper.
-        _reader = easyocr.Reader(['en'], gpu=False) 
+        _reader = easyocr.Reader(['en'], gpu=True) 
     return _reader
 
 def extract_text_and_boxes(image: np.ndarray) -> List[Dict[str, Any]]:
