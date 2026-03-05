@@ -14,6 +14,10 @@ from models.schemas import ParseWordsRequest, TranslateRowRequest
 
 router = APIRouter()
 
+# Global semaphore to ensure only one LLM request is processed at a time.
+# This prevents overloading local Ollama instances or hitting rate limits.
+llm_semaphore = asyncio.Semaphore(1)
+
 def sort_reading_order(boxes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     if not boxes: return []
     unassigned = sorted(boxes, key=lambda b: b["bbox"][1])
@@ -196,10 +200,10 @@ async def parse_words_endpoint(request: ParseWordsRequest):
             if not chunk_data.words:
                 return []
             
-            # Using the pre-calculated full chunk context instead of just building from highlight words
             full_text = chunk_data.full_text
             chunk_dicts = [{"text": w.text, "bbox": w.bbox} for w in chunk_data.words]
-            return await asyncio.to_thread(parse_highlighted_words_with_llm, chunk_dicts, full_text)
+            async with llm_semaphore:
+                return await asyncio.to_thread(parse_highlighted_words_with_llm, chunk_dicts, full_text)
             
         final_data = []
         for chunk in request.chunks:
@@ -246,7 +250,8 @@ async def translate_row_endpoint(request: TranslateRowRequest):
     import traceback
     try:
         from core.llm_parser import translate_and_verify_row_with_llm
-        result = await asyncio.to_thread(translate_and_verify_row_with_llm, request.word, request.context, request.model)
+        async with llm_semaphore:
+            result = await asyncio.to_thread(translate_and_verify_row_with_llm, request.word, request.context, request.model)
         return {
             "status": "success",
             "data": result

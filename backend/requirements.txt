@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+python-multipart
+python-dotenv
+easyocr
+opencv-python
+numpy
+PyMuPDF
+openai
+google-genai

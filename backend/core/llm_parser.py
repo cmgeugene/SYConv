@@ -329,7 +329,7 @@ def translate_and_verify_row_with_llm(word: str, context: str, model: str = None
         CRITICAL VERIFICATION & REFINEMENT:
         1. LEMMA NORMALIZATION: Ensure "lemma" is the BASE form.
            - REMOVE plural or 3rd-person 's' (e.g., "relates" MUST be corrected to "relate").
-           - Ignore only if it is a validated multi-word IDIOM.
+           - Even for IDIOMS, the main verb must be in its base present form (e.g., "putting it off" -> "put off", "taken back" -> "take back").
         2. KOREAN NATURALNESS: Refine "context_meaning" for the best collocation.
            - For alternative synonyms, using a slash (e.g., "빠지다 / 굴복하다") is RECOMMENDED.
         3. POS SUFFIX CONSISTENCY: MUST match POS suffix rules. NEVER use nominalized endings (~함, ~기) for verbs.

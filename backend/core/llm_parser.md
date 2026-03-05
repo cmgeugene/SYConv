@@ -5,7 +5,8 @@
 1. **Pass 1 (Extraction)**: Extracts lemma, POS, and split meanings (`context_meaning` vs `other_meanings`) from a given sentence.
     - **Conciseness**: Strictly limits meanings to words/short phrases (No sentences).
     - **POS Matching**: Definitions for `other_meanings` must strictly belong to the detected POS.
-2. **Pass 2 (Verification)**: Reviewing and correcting any conversational noise or POS mismatches.
+2. **Pass 2 (Verification)**: Reviewing and correcting any conversational noise or POS mismatches. 
+    - **Lemma Normalization**: Strictly enforces base forms even for idioms (e.g., "putting it off" -> "put off").
 3. **Consolidation**: Merges and deduplicates meanings into a single comma-separated string: `{Contextual Meaning}, {Other Dictionary Meanings}`.
 
 ## TODOs in this Code

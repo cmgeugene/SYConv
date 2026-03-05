@@ -1,12 +1,17 @@
 Write-Host "Starting SYConv Hybrid App..." -ForegroundColor Cyan
 
-# Start Backend
-Write-Host "1. Starting Backend (FastAPI on http://localhost:8000)..."
-Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd backend; .\venv\Scripts\activate; uvicorn main:app --reload"
+# 1. Validate Env
+if (!(Test-Path "backend/.env")) {
+    Write-Host "Error: backend/.env missing. Run './setup.ps1' first." -ForegroundColor Red
+    exit 1
+}
 
-# Start Frontend
-Write-Host "2. Starting Frontend (React Vite on http://localhost:5173)..."
+# 2. Start Backend
+Write-Host "1. Starting Backend (FastAPI)..."
+Start-Process powershell -ArgumentList "-NoExit", "-Command", "Set-Location backend; uv run uvicorn main:app --reload"
+
+# 3. Start Frontend
+Write-Host "2. Starting Frontend (Vite)..."
 Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd frontend; npm run dev"
 
-Write-Host "Done! The developer environment is spinning up in separate windows." -ForegroundColor Green
-Write-Host "Make sure you have set OPENAI_API_KEY in your environment variables for the LLM to work." -ForegroundColor Yellow
+Write-Host "`nDone! The app is spinning up in separate windows." -ForegroundColor Green

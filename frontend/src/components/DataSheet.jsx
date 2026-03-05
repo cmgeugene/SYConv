@@ -8,24 +8,32 @@ ModuleRegistry.registerModules([AllCommunityModule]);
 import 'ag-grid-community/styles/ag-grid.css';
 import 'ag-grid-community/styles/ag-theme-quartz.css';
 
-import { Loader2 } from 'lucide-react';
+import { Loader2, Trash2, RefreshCw } from 'lucide-react';
 
 const ActionCellRenderer = (props) => {
     if (props.data.isLoading) {
         return (
             <div style={{ display: 'flex', alignItems: 'center', height: '100%', color: '#3b82f6' }}>
-                <Loader2 size={18} className="spin-animation" />
+                <Loader2 size={16} className="spin-animation" />
                 <span style={{ marginLeft: '6px', fontSize: '0.85em', fontWeight: 500 }}>Translating...</span>
             </div>
         );
     }
     return (
-        <div style={{ display: 'flex', alignItems: 'center', height: '100%' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', height: '100%' }}>
             <button
                 onClick={() => props.context.translateRow(props.node)}
-                style={{ padding: '4px 8px', cursor: 'pointer', background: '#3b82f6', color: 'white', border: 'none', borderRadius: '4px', fontSize: '0.85em', fontWeight: 500 }}
+                title="Translate"
+                style={{ display: 'flex', alignItems: 'center', padding: '6px', cursor: 'pointer', background: '#3b82f6', color: 'white', border: 'none', borderRadius: '4px' }}
             >
-                ⟳ Translate
+                <RefreshCw size={14} />
+            </button>
+            <button
+                onClick={() => props.context.deleteRow(props.data.id)}
+                title="Delete Row"
+                style={{ display: 'flex', alignItems: 'center', padding: '6px', cursor: 'pointer', background: '#ef4444', color: 'white', border: 'none', borderRadius: '4px' }}
+            >
+                <Trash2 size={14} />
             </button>
         </div>
     );
@@ -77,7 +85,13 @@ export default function DataSheet({ rowData, onDataChange, selectedModel }) {
     }, [selectedModel]);
 
     const columnDefs = useMemo(() => [
-        { field: 'word', headerName: 'Word / Phrase', editable: true, flex: 1.5 },
+        {
+            field: 'word',
+            headerName: 'Word / Phrase',
+            editable: true,
+            flex: 1.5,
+            rowDrag: true
+        },
         { field: 'lemma', headerName: 'Lemma (원형)', editable: true, flex: 1 },
         { field: 'pos', headerName: 'POS', editable: true, flex: 1 },
         { field: 'meaning', headerName: 'Meaning', editable: true, flex: 2 },
@@ -125,13 +139,25 @@ export default function DataSheet({ rowData, onDataChange, selectedModel }) {
         }
     };
 
+    const deleteRow = useCallback((id) => {
+        const updatedData = rowData.filter(row => row.id !== id);
+        onDataChange(updatedData);
+    }, [rowData, onDataChange]);
+
+    const onRowDragEnd = (event) => {
+        const updatedData = [];
+        gridRef.current.api.forEachNode(node => updatedData.push(node.data));
+        onDataChange(updatedData);
+    };
+
+    const gridContext = useMemo(() => ({
+        translateRow,
+        deleteRow
+    }), [translateRow, deleteRow]);
+
     const getRowId = useMemo(() => {
         return (params) => params.data.id;
     }, []);
-
-    const gridContext = useMemo(() => ({
-        translateRow
-    }), [translateRow]);
 
     return (
         <div className="ag-theme-quartz-dark" style={{ height: '100%', width: '100%', borderRadius: '8px', overflow: 'hidden' }}>
@@ -143,6 +169,7 @@ export default function DataSheet({ rowData, onDataChange, selectedModel }) {
                 getRowId={getRowId}
                 onGridReady={onGridReady}
                 onCellValueChanged={onCellValueChanged}
+                onRowDragEnd={onRowDragEnd}
                 context={gridContext}
                 rowHeight={44}
                 headerHeight={48}
