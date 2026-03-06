@@ -36,6 +36,7 @@ class ExtractHighlightsResponse(BaseModel):
 
 class ParseWordsRequest(BaseModel):
     chunks: List[ChunkData]
+    model: str = None
 
 class TranslateRowRequest(BaseModel):
     word: str

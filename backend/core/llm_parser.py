@@ -6,7 +6,7 @@ from google import genai
 from google.genai import types
 from models.schemas import ParsedWord
 
-def parse_highlighted_words_with_llm(highlighted_texts_with_boxes: List[Dict[str, Any]], full_context_text: str) -> List[Dict[str, Any]]:
+def parse_highlighted_words_with_llm(highlighted_texts_with_boxes: List[Dict[str, Any]], full_context_text: str, model: str = None) -> List[Dict[str, Any]]:
     """
     Sends the highlighted text along with the full chunk context to the LLM to extract POS and meanings.
     Supports both OpenAI and Gemini based on the LLM_PROVIDER environment variable.
@@ -14,7 +14,7 @@ def parse_highlighted_words_with_llm(highlighted_texts_with_boxes: List[Dict[str
     """
     provider = os.getenv("LLM_PROVIDER", "openai").lower()
     ollama_endpoint = os.getenv("OLLAMA_ENDPOINT", "http://localhost:11434/api/generate")
-    ollama_model = os.getenv("OLLAMA_MODEL", "translategemma:4b")
+    ollama_model = model if model else os.getenv("OLLAMA_MODEL", "translategemma:4b")
     
     # Just isolating the texts for the prompt
     raw_texts = [item["text"] for item in highlighted_texts_with_boxes]
@@ -35,6 +35,7 @@ def parse_highlighted_words_with_llm(highlighted_texts_with_boxes: List[Dict[str
     1. "word": Extract the base form (lemma) used in the context. Convert plurals to singular, and past/participle to present base verb (e.g., "realized" -> "realize"). If it's an idiom (e.g., "taking off"), extract the base idiom ("take off").
     2. "pos": Determine the Part of Speech in the context. If it acts as multiple, separate them by a slash and sort using this EXACT priority order: noun, verb, adj, adv, prep, conj (e.g., "noun / verb", NEVER "verb / noun").
     3. "meaning": Provide the primary Korean meaning appropriate for the context first. Then, optionally add other common dictionary definitions. DO NOT write "(문맥)". Align meanings if there are multiple POS tags (e.g., pos: "noun / verb", meaning: "예시 / 예시를 들다").
+       - SEMANTIC BOUNDARY: Even if the target word is part of a larger phrase (e.g., "currency" in "currency exchange rates"), provide the meaning of the SPECIFIC target word (e.g., "화폐", "통화"), NOT the entire phrase (e.g., "환율").
     4. "is_idiom": true or false.
     
     MUST RETURN IN THIS EXACT JSON FORMAT:
@@ -67,10 +68,10 @@ def parse_highlighted_words_with_llm(highlighted_texts_with_boxes: List[Dict[str
                 "stream": False,
                 "options": {
                     "temperature": 0.1,
-                    "think": False,
                     "num_ctx": 4096,
                     "num_predict": 2500
-                }
+                },
+                "think": "medium" if "gpt-oss" in ollama_model else True
             }
             
             req = urllib.request.Request(chat_endpoint, data=json_lib.dumps(req_data).encode('utf-8'), headers={'Content-Type': 'application/json'})
@@ -217,7 +218,10 @@ def translate_and_verify_row_with_llm(word: str, context: str, model: str = None
                 "model": ollama_model,
                 "messages": messages,
                 "stream": False,
-                "options": {"temperature": 0.0, "think": False}
+                "options": {
+                    "temperature": 0.0
+                },
+                "think": "medium" if "gpt-oss" in ollama_model else True
             }
             
             req = urllib.request.Request(chat_endpoint, data=json_lib.dumps(req_data).encode('utf-8'), headers={'Content-Type': 'application/json'})
@@ -293,6 +297,7 @@ def translate_and_verify_row_with_llm(word: str, context: str, model: str = None
            - Format: {{"pos": "품사명", "context_meaning": "문맥뜻", "other_meanings": ["일반뜻1", "일반뜻2"]}}
            - CRITICAL: "context_meaning" and "other_meanings" MUST be CONCISE KOREAN SYNONYMS (대역어).
            - CRITICAL: "context_meaning" should be the most natural phrasing (Collocation).
+           - SEMANTIC BOUNDARY: Even if the target word is part of a larger phrase (e.g., "currency" in "currency exchange rates"), provide the meaning of the SPECIFIC target word itself (e.g., "화폐", "통화"), NOT the entire phrase (e.g., "환율").
            - CRITICAL: NO SENTENCES. NO DESCRIPTIONS. NO EXPLANATIONS.
            - CRITICAL: Use correct KOREAN suffixes (~한/인 for Adj, ~하다 for Verb).
         4. "is_idiom": boolean.
@@ -334,7 +339,8 @@ def translate_and_verify_row_with_llm(word: str, context: str, model: str = None
            - For alternative synonyms, using a slash (e.g., "빠지다 / 굴복하다") is RECOMMENDED.
         3. POS SUFFIX CONSISTENCY: MUST match POS suffix rules. NEVER use nominalized endings (~함, ~기) for verbs.
         4. NO SENTENCES/DESCRIPTIONS: Use only short words/synonyms.
-        5. STRICT FILTERING: Remove any meanings that don't match the POS.
+        5. STRICT SEMANTIC FILTERING: Ensure the meaning reflects ONLY the target word, not its neighbors. Correct any cases where the meaning of a neighboring word has leaked into the target word (e.g., "currency" in "currency exchange rates" should be "화폐/통화", NOT "환율").
+        6. STRICT FILTERING: Remove any meanings that don't match the POS.
         
         Output ONLY the final, corrected JSON.
         '''

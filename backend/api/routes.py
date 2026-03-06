@@ -196,19 +196,19 @@ async def parse_words_endpoint(request: ParseWordsRequest):
     """
     import traceback
     try:
-        async def process_chunk(chunk_data):
+        async def process_chunk(chunk_data, model_name):
             if not chunk_data.words:
                 return []
             
             full_text = chunk_data.full_text
             chunk_dicts = [{"text": w.text, "bbox": w.bbox} for w in chunk_data.words]
             async with llm_semaphore:
-                return await asyncio.to_thread(parse_highlighted_words_with_llm, chunk_dicts, full_text)
+                return await asyncio.to_thread(parse_highlighted_words_with_llm, chunk_dicts, full_text, model_name)
             
         final_data = []
         for chunk in request.chunks:
             # Awaiting each chunk sequentially to prevent LLM rate limits/local overload
-            res = await process_chunk(chunk)
+            res = await process_chunk(chunk, request.model)
             final_data.extend(res)
             
         return {
