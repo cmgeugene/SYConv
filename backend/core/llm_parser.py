@@ -217,7 +217,8 @@ def translate_and_verify_row_with_llm(word: str, context: str, model: str = None
                 "model": ollama_model,
                 "messages": messages,
                 "stream": False,
-                "options": {"temperature": 0.0, "think": False}
+                "options": {"temperature": 0.0},
+                "think": "medium" if "gpt-oss" in ollama_model else True
             }
             
             req = urllib.request.Request(chat_endpoint, data=json_lib.dumps(req_data).encode('utf-8'), headers={'Content-Type': 'application/json'})
